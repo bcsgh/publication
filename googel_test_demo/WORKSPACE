@@ -1,0 +1,13 @@
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+git_repository(
+    name = "com_google_googletest_old",
+    remote = "git://github.com/google/googletest.git",
+    tag = "release-1.10.0",  # current as of 2020/1/25
+)
+
+git_repository(
+    name = "com_google_googletest_new",
+    commit = "10b1902d893ea8cc43c69541d70868f91af3646b",
+    remote = "git://github.com/google/googletest.git",
+)
