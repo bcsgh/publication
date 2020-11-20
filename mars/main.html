@@ -1,0 +1,351 @@
+<html>
+<head>
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<script type='text/javascript' src='./orbital.js'></script>
+<script type='text/javascript' src='./bandwidth.js'></script>
+<script>
+google.charts.load('current', {'packages':['annotationchart']});
+      
+band = {
+  // http://en.wikipedia.org/wiki/File:Cmbr.svg
+  base_noise : 200e6 / (365*24*3600),  // W/sr
+  base_band : 90e9,  // Hz
+  base_bandwidth : 10e9,  // Hz
+}
+
+annt = {
+  solar_d: 100,  //m
+  d:100, // m
+  e_a:0.70,
+  k:(70 * Math.PI/180)
+}
+
+var rad_sun_m = 1391000000/2;
+
+var getAllDataAt = function(J, fncb) {
+  //console.log(J);
+
+  var p = orbital.allPositionsAt(orbital.data, J);
+
+  var dis = {}
+
+  var date_J = orbital.DateFromJ(J);
+
+  var bw = {}
+  // Update the lines
+  var data_rates_row = [date_J];
+  for (var i = 0; i < orbital.link_pairs.length; i++) {
+    var pair = orbital.link_pairs[i];
+    var r = orbital.Distance(p[pair[0]], p[pair[1]]);
+    var name = pair[0] + "/" + pair[1];
+    dis[name] = r;
+    bw[name] = bandwidth.avalable(r, annt, band) / 1e9;
+    data_rates_row = data_rates_row.concat([bw[name]]);
+  }
+
+  var latency_row = [date_J];
+  for (var path = 0; path < orbital.paths.length; path++) {
+    var sum = 0;
+    for (var step = 0; step < orbital.paths[path].length; step++) {
+      sum += dis[orbital.paths[path][step]];
+    }
+    latency_row = latency_row.concat([bandwidth.lm(sum)]);
+  }
+
+  var em = {
+    x: (p.earth.x - p.mars.x),
+    y: (p.earth.y - p.mars.y),
+    z: (p.earth.z - p.mars.z),
+  }
+    
+  var e_mag = Math.sqrt(p.earth.x*p.earth.x + 
+                        p.earth.y*p.earth.y + 
+                        p.earth.z*p.earth.z);
+  var m_mag = Math.sqrt(p.mars.x*p.mars.x + 
+                        p.mars.y*p.mars.y + 
+                        p.mars.z*p.mars.z);
+  var em_mag = Math.sqrt(em.x*em.x + 
+                         em.y*em.y + 
+                         em.z*em.z);
+
+
+  var sem_c = (e_mag*e_mag+em_mag*em_mag-m_mag*m_mag)/(2*e_mag*em_mag);
+  var sme_c = (m_mag*m_mag+em_mag*em_mag-e_mag*e_mag)/(2*m_mag*em_mag);
+
+  var sem = Math.acos((e_mag*e_mag+em_mag*em_mag-m_mag*m_mag)/(2*e_mag*em_mag));
+  var sme = Math.acos((m_mag*m_mag+em_mag*em_mag-e_mag*e_mag)/(2*m_mag*em_mag));
+
+  var angle_row = [
+    date_J,
+    sem / (rad_sun_m/e_mag), 
+    undefined,
+    sme / (rad_sun_m/m_mag), 
+    undefined
+  ];
+
+  var total_bw_row = [orbital.DateFromJ(J), bandwidth.Total(bw)];
+
+  fncb({
+    data_rates_row: data_rates_row,
+    total_bw_row: total_bw_row,
+    latency_row: latency_row,
+    angle_row: angle_row,
+    sem: sem,
+    sme: sme
+  });
+};
+
+
+var drawChart = function() {
+  var latency = new google.visualization.DataTable();
+  latency.addColumn('date', 'Date');
+  latency.addColumn('number', 'e_m');
+  latency.addColumn('number', 'el4');
+  latency.addColumn('number', 'el5');
+  latency.addColumn('number', 'ml4');
+  latency.addColumn('number', 'ml5');
+  latency.addColumn('number', 'el4_ml4');
+  latency.addColumn('number', 'el4_ml5');
+  latency.addColumn('number', 'el5_ml4');
+  latency.addColumn('number', 'el5_ml5');
+
+  var data_rates = new google.visualization.DataTable();
+  data_rates.addColumn('date', 'Date');
+  for (var i = 0; i < orbital.link_pairs.length; i++) {
+    var pair = orbital.link_pairs[i];
+    data_rates.addColumn('number', pair);
+  }
+
+  var angles = new google.visualization.DataTable();
+  angles.addColumn('date', 'Date');
+  angles.addColumn('number', 'earth');
+  angles.addColumn('string', 'title1');
+  angles.addColumn('number', 'mars');
+  angles.addColumn('string', 'title2');
+  var angle_rows = []
+
+  var total_bw = new google.visualization.DataTable();
+  total_bw.addColumn('date', 'Date');
+  total_bw.addColumn('number', "Total");
+
+  var now_j = orbital.JFromDate(new Date()) * 1.0;
+  var j_start = now_j - 365*2;
+  var j_end = j_start + 365*10;
+
+  var fncb = function(obj) {
+    data_rates.addRows([obj.data_rates_row]);
+    total_bw.addRows([obj.total_bw_row]);
+    latency.addRows([obj.latency_row]);
+    angle_rows[angle_rows.length] = obj.angle_row;
+  };
+
+  for (J = j_start; J < j_end; J=J+2) getAllDataAt(J, fncb);
+  // annotate potential occlution events
+  for (var j = 1; j < angle_rows.length - 1; j++) {
+    var p = angle_rows[j-1];
+    var t = angle_rows[j];
+    var f = angle_rows[j+1];
+    if (t[1] < 1.2 && 
+        p[1] > t[1] && 
+        f[1] > t[1]) {
+      t[2] = Math.floor(t[1]*100, 1) + '%';
+    }
+    if (t[3] < 1.2 && 
+        p[3] > t[3] && 
+        f[3] > t[3]) { 
+      t[4] = Math.floor(t[3]*100, 1) + '%';
+    }
+  }
+
+  angles.addRows(angle_rows);
+
+  var chart = new google.visualization.AnnotationChart(document.getElementById('latency'));
+  chart.draw(latency, {displayAnnotations: true});
+
+  var chart = new google.visualization.AnnotationChart(document.getElementById('datarates'));
+  chart.draw(data_rates, {displayAnnotations: true});
+
+  var chart = new google.visualization.AnnotationChart(document.getElementById('total_bw'));
+  chart.draw(total_bw, {displayAnnotations: true});
+
+  var chart = new google.visualization.AnnotationChart(document.getElementById('angles'));
+  chart.draw(angles, {displayAnnotations: true, annotationsWidth:5});
+}
+
+var size = 100
+var scale = 260000000000/size;
+
+var DrawAt = function(J) {
+  var fncb = function(obj) {
+
+    var muck = function(x) {
+      var h = Math.floor(x/60);
+      x = x - h*60;
+      var m = Math.floor(x);
+      var s = (x-m)*60;
+
+      h = "00" + h.toFixed(0); h = h.substring(h.length-2);
+      m = "00" + m.toFixed(0); m = m.substring(m.length-2);
+      s = "00" + s.toFixed(5); s = s.substring(s.length-8).substring(0,7);
+      return h + ":" + m + ":" + s;
+    }
+
+    document.getElementById('e_m').innerText = muck(obj.latency_row[1]);
+    document.getElementById('el4').innerText = muck(obj.latency_row[2]);
+    document.getElementById('el5').innerText = muck(obj.latency_row[3]);
+    document.getElementById('ml4').innerText = muck(obj.latency_row[4]);
+    document.getElementById('ml5').innerText = muck(obj.latency_row[5]);
+    document.getElementById('el4_ml4').innerText = muck(obj.latency_row[6]);
+    document.getElementById('el4_ml5').innerText = muck(obj.latency_row[7]);
+    document.getElementById('el5_ml4').innerText = muck(obj.latency_row[8]);
+    document.getElementById('el5_ml5').innerText = muck(obj.latency_row[9]);
+
+    var muck = function(x, d) {
+      return ("" + x).substring(0,d);
+    }
+
+    document.getElementById('bw_total').innerText = muck(obj.total_bw_row[1],7);
+
+    var rd = 180/ Math.PI;
+    document.getElementById('ea').innerText = muck(obj.angle_row[1],5) + " / " + muck(obj.sem*rd, 10);
+    document.getElementById('ma').innerText = muck(obj.angle_row[3],5) + " / " + muck(obj.sme*rd, 10);
+
+    obj.data_rates_row;
+
+    obj.angle_row;
+  };
+  getAllDataAt(J, fncb);
+
+
+  document.getElementById("time").innerText = orbital.DateFromJ(J)
+
+  var p = orbital.allPositionsAt(orbital.data, J);
+
+  // Update the Dots
+  for (var k in p) {
+    if (!p.hasOwnProperty(k)) continue;
+    var a = p[k];
+    var c = document.getElementById(k);
+    if (!c) { console.log("missing " + k); continue; }
+
+    //console.log(k + "@" + a.x/scale + "/" + a.y/scale);
+    if (size < Math.min(Math.abs(a.x/scale), Math.abs(a.y/scale))) {
+      console.log(k + " OOB");
+    } else {
+      c.setAttribute("cx", a.x/scale);
+      c.setAttribute("cy", a.y/scale);
+    }
+  }
+  
+  // Update the lines
+  for (var i = 0; i < orbital.link_pairs.length; i++) {
+    var pair = orbital.link_pairs[i];
+    var name = pair[0] + "/" + pair[1];
+
+    var pth = document.getElementById(name);
+    if (!pth) { console.log("missing " + name); continue; }
+
+    var D = orbital.FromTo(p[pair[0]], p[pair[1]]);
+    //console.log(name + "=" + D);
+    pth.setAttribute("d", D);
+  }
+};
+</script>
+</head>
+<body>
+<table><tr><td>
+<table border=1>
+<tr><td>name   </td><td>light minutes</td><td>Earth Relay</td> <td>Mars Relay</td><tr>
+<tr><td>e_m    </td><td id='e_m'></td> <td>  </td> <td>  </td><tr>
+<tr><td>el4    </td><td id='el4'></td> <td bgcolor="#00ff00">L4</td> <td>  </td><tr>
+<tr><td>el5    </td><td id='el5'></td> <td bgcolor="#00ff00">L5</td> <td>  </td><tr>
+<tr><td>ml4    </td><td id='ml4'></td> <td>  </td> <td bgcolor="#ff0000">L4</td><tr>
+<tr><td>ml5    </td><td id='ml5'></td> <td>  </td> <td bgcolor="#ff0000">L5</td><tr>
+<tr><td>el4_ml4</td><td id='el4_ml4'></td> <td bgcolor="#00ff00">L4</td> <td bgcolor="#ff0000">L4</td><tr>
+<tr><td>el4_ml5</td><td id='el4_ml5'></td> <td bgcolor="#00ff00">L4</td> <td bgcolor="#ff0000">L5</td><tr>
+<tr><td>el5_ml4</td><td id='el5_ml4'></td> <td bgcolor="#00ff00">L5</td> <td bgcolor="#ff0000">L4</td><tr>
+<tr><td>el5_ml5</td><td id='el5_ml5'></td> <td bgcolor="#00ff00">L5</td> <td bgcolor="#ff0000">L4</td><tr>
+</table>
+
+<table border=1>
+<tr><td>total b/w (Gb/s)</td> <td id='bw_total'></td><tr>
+<tr><td>ang from Earth (sol radi / deg)</td> <td id='ea'></td><tr>
+<tr><td>ang from Mars (sol radi / deg)</td> <td id='ma'></td><tr>
+</table>
+
+</td> <td>
+<div id="time"></div>
+<svg style="overflow: hidden; position: relative; " height="480" version="1.1" width="480" xmlns="http://www.w3.org/2000/svg" viewBox="-100 -100 200 200" preserveAspectRatio="xMinYMin">
+  <defs></defs>
+  <rect x="-100" y="-100" width="200" height="200" r="0" rx="0" ry="0" fill="#000000" stroke="#000"></rect>
+  <circle cx="0" cy="0" r="4" fill="#ffff00" stroke="#000" stroke-width="0"></circle>
+  <circle id="earth" cx="0" cy="0" r="2" fill="#77ff77" stroke="#000" stroke-width="0"></circle>
+  <circle id="mars" cx="0" cy="0" r="2" fill="#ff7777" stroke="#000" stroke-width="0"></circle>
+  <circle id="earth_l4" cx="0" cy="0" r="1" fill="#777777" stroke="#000" stroke-width="0"></circle>
+  <circle id="earth_l5" cx="0" cy="0" r="1" fill="#777777" stroke="#000" stroke-width="0"></circle>
+  <circle id="mars_l4" cx="0" cy="0" r="1" fill="#777777" stroke="#000" stroke-width="0"></circle>
+  <circle id="mars_l5" cx="0" cy="0" r="1" fill="#777777" stroke="#000" stroke-width="0"></circle>
+
+  <path id="earth/mars"       fill="none" stroke="#cccccc" stroke-width="0.4166666666666667"></path>
+  <path id="earth/earth_l4"   fill="none" stroke="#00ff00" stroke-width="0.4166666666666667"></path>
+  <path id="earth/earth_l5"   fill="none" stroke="#00ff00" stroke-width="0.4166666666666667"></path>
+  <path id="earth/mars_l4"    fill="none" stroke="#cccccc" stroke-width="0.4166666666666667"></path>
+  <path id="earth/mars_l5"    fill="none" stroke="#cccccc" stroke-width="0.4166666666666667"></path>
+  <path id="earth_l4/mars_l4" fill="none" stroke="#222222" stroke-width="0.4166666666666667"></path>
+  <path id="earth_l4/mars_l5" fill="none" stroke="#222222" stroke-width="0.4166666666666667"></path>
+  <path id="earth_l5/mars_l4" fill="none" stroke="#222222" stroke-width="0.4166666666666667"></path>
+  <path id="earth_l5/mars_l5" fill="none" stroke="#222222" stroke-width="0.4166666666666667"></path>
+  <path id="mars/mars_l4"     fill="none" stroke="#ff0000" stroke-width="0.4166666666666667"></path>
+  <path id="mars/mars_l5"     fill="none" stroke="#ff0000" stroke-width="0.4166666666666667"></path>
+  <path id="mars/earth_l4"    fill="none" stroke="#cccccc" stroke-width="0.4166666666666667"></path>
+  <path id="mars/earth_l5"    fill="none" stroke="#cccccc" stroke-width="0.4166666666666667"></path>
+</svg>
+</td><tr></table>
+<hr/>
+<div id="slider">
+This plots the one-way latency for a light speed signal from earth to mars via
+the direct pathas well as via relays stationed at the Earth and Mars L4 and
+L5 points.
+
+<div id="latency" style='width: 100%; height: 360px;'></div>
+
+Bandwidth per link in Gb/sec.
+<div id="datarates" style='width: 100%; height: 360px;'></div>
+
+Total Bandwidth in Gb/sec.
+<div id="total_bw" style='width: 100%; height: 360px;'></div>
+
+Angle between sun and earth/mars line, in unit of apparent redius of the sun.
+<div id="angles" style='width: 100%; height: 360px;'></div>
+</div>
+<script>
+google.charts.setOnLoadCallback(function() {
+  orbital.InjectLPoints();
+
+  drawChart();
+
+  //setInterval(function(){DrawAt(...);}, 100);
+
+  var now_j = orbital.JFromDate(new Date());
+  DrawAt(now_j);
+
+  var ud = null;
+  // Make this update in real time.
+  document.getElementById('slider').onmouseout = function(x) {
+    clearInterval(ud);
+    ud = setInterval(function(){
+      DrawAt(orbital.JFromDate(new Date()));
+    }, 500);
+  }
+  document.getElementById('slider').onmouseout()
+
+  document.getElementById('slider').onmousemove = function(x) {
+    clearInterval(ud);
+    ud = null;
+    var del = (x.clientX - this.offsetLeft) * 1.0 / this.offsetWidth;
+    DrawAt(365*10 *del + now_j - 365*2);
+  }
+});
+</script>
+</body>
+</html>
